@@ -1,0 +1,65 @@
+:root {
+  --bg: #0b0d0c;
+  --surface: #141715;
+  --border-sub: #20251f;
+  --cyan: #4fa3b0;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: #e9ece6;
+  font-family: "IBM Plex Sans", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+textarea, input, button {
+  font-family: inherit;
+}
+
+/* Evita el zoom automático de iOS al enfocar inputs (necesita >=16px) */
+@media (max-width: 640px) {
+  textarea, input[type="password"], input[type="text"] {
+    font-size: 16px !important;
+  }
+}
+
+/* ── Foco visible (accesibilidad) ─────────────────────────────────────── */
+button:focus-visible, textarea:focus-visible, input:focus-visible, a:focus-visible {
+  outline: 2px solid var(--cyan);
+  outline-offset: 2px;
+}
+
+/* ── Scrollbar sutil ──────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #2c332c; border-radius: 8px; }
+::-webkit-scrollbar-thumb:hover { background: #3c453d; }
+
+/* ── VU-metro (LevelMeter) ────────────────────────────────────────────── */
+@keyframes sonia-meter {
+  from { transform: scaleY(0.35); opacity: 0.7; }
+  to   { transform: scaleY(1);    opacity: 1;   }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; }
+}
+
+/* ── Checklists de Markdown (GFM task list) ──────────────────────────── */
+.task-list-item { list-style: none; margin-left: -22px; }
+.task-list-item input[type="checkbox"] {
+  margin-right: 8px;
+  accent-color: var(--cyan);
+  transform: translateY(1px);
+}
+
+/* ── Links dentro de mensajes ─────────────────────────────────────────── */
+article a { color: var(--cyan); }
