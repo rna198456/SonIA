@@ -225,12 +225,16 @@ Vas a recibir un CONTEXTO GLOBAL (resumen del guion completo) y un LOTE de 3 a 5
 
 2 a 4 ítems por categoría, cada uno una frase corta y concreta (3-8 palabras) — no una oración larga. Si una categoría no da para tanto en una escena puntual, devolvé array vacío en vez de inventar contenido que no está en el texto. No repitas el contexto global en la respuesta. No agregues justificación teórica — esto es relevamiento rápido, no dossier creativo. Para profundizar una escena puntual después, se usan los modos Wild Tracks / Teoría del chat normal.
 
+Ejemplo de formato esperado (acá 1 escena — tu respuesta cubre TODAS las del lote, en el mismo array):
+{"escenas":[{"id":3,"header":"INT. COCINA - DÍA","ambientes":["goteo de canilla","zumbido de heladera"],"foley":["pasos en baldosa","roce de delantal"],"fx":["eco metálico distante"]}]}
+
 Respondé ÚNICAMENTE el JSON del schema. Nada de texto antes o después, nada de \`\`\`.`;
 
-// Structured Outputs de Groq: soportado con strict:true específicamente en
-// gpt-oss-120b y gpt-oss-20b (console.groq.com/docs/structured-outputs).
-// additionalProperties:false y todo campo en "required" son obligatorios
-// para que el modo estricto valga.
+// Structured Outputs de Groq (strict:true) mostró fallas de validación en
+// uso real — probablemente por el max_tokens corto de más arriba, pero
+// json_object (más permisivo, sin rechazo duro) es la opción más robusta
+// mientras tanto. Dejamos el schema igual: documenta el contrato exacto que
+// espera parseJsonLoose()/buildBatchMessages(), aunque no viaje en el request.
 export const BATCH_ANALYSIS_SCHEMA = {
   name: "analisis_escenas",
   strict: true,
@@ -259,8 +263,11 @@ export const BATCH_ANALYSIS_SCHEMA = {
 };
 
 // temperature baja: queremos consistencia de formato a lo largo de 10-20+
-// lotes, no variedad creativa. max_tokens cubre un lote de ~4 escenas.
-export const BATCH_GENERATION_CONFIG = { temperature: 0.3, max_tokens: 900, top_p: 0.9, stream: false };
+// lotes, no variedad creativa. max_tokens generoso: un lote de 4-5 escenas
+// en JSON (claves repetidas por escena) pesa más de lo que parece — quedarse
+// corto trunca el JSON a mitad de generar, que es indistinguible de un error
+// de validación de schema pero la causa real es otra.
+export const BATCH_GENERATION_CONFIG = { temperature: 0.3, max_tokens: 1600, top_p: 0.9, stream: false };
 
 // Prompt corto y barato para el contexto narrativo opcional (1 sola llamada
 // por guion completo, no por lote — ver groqApi.js summarizeScriptForContext).
@@ -348,7 +355,7 @@ export const GROQ_MODELS = ["openai/gpt-oss-120b", "openai/gpt-oss-20b"];
 
 // ── Registro remoto opcional (Google Sheets vía Apps Script) ────────────────
 // Dejalo vacío hasta desplegar apps-script/Code.gs — ver README.
-export const SHEETS_ENDPOINT = "https://script.google.com/macros/s/AKfycbwjfJAaSjUP5SLTrSjUrhWZ5NjbuFjbaBb3Kd30PSWyXYmWDROR8600WSJ7QW4Dxk1j/exec";
+export const SHEETS_ENDPOINT = "";
 
 // ─────────────────────────────────────────────────────────────────────────────
 export function buildSystemPrompt(modeId) {

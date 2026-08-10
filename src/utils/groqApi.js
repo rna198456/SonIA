@@ -2,7 +2,7 @@
 // groqApi.js — Llamada a Groq con fallback entre modelos
 // ─────────────────────────────────────────────────────────────────────────────
 import {
-  GROQ_ENDPOINT, GROQ_MODELS, buildBatchMessages, BATCH_ANALYSIS_SCHEMA,
+  GROQ_ENDPOINT, GROQ_MODELS, buildBatchMessages,
   BATCH_GENERATION_CONFIG, SCRIPT_SUMMARY_PROMPT, SCRIPT_SUMMARY_CONFIG,
 } from "../data/sonPrompt";
 
@@ -121,10 +121,39 @@ export async function summarizeScriptForContext(apiKey, fullText) {
   }
 }
 
+/** Un solo intento de llamada para un lote. Separado del loop para poder
+ *  reintentar limpio sin duplicar la construcción del request. */
+async function callOneBatch(apiKey, model, messages) {
+  const res = await fetch(GROQ_ENDPOINT, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model,
+      messages,
+      temperature: BATCH_GENERATION_CONFIG.temperature,
+      max_tokens: BATCH_GENERATION_CONFIG.max_tokens,
+      top_p: BATCH_GENERATION_CONFIG.top_p,
+      stream: false,
+      // json_object en vez de json_schema/strict: más permisivo, sin rechazo
+      // duro por validación — parseJsonLoose() abajo hace el resto del trabajo.
+      response_format: { type: "json_object" },
+    }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data?.error?.message || `Error ${res.status}`);
+
+  const raw = data?.choices?.[0]?.message?.content ?? "";
+  const parsed = parseJsonLoose(raw);
+  const result = Array.isArray(parsed) ? parsed : parsed?.escenas;
+  if (!Array.isArray(result)) throw new Error("La respuesta no tuvo el formato esperado.");
+  return result;
+}
+
 /**
  * Recorre los lotes uno por uno, ritmeados por tokens reales (no un delay
- * fijo), y llama a onProgress después de cada uno. Un lote que falla NO
- * corta la corrida: queda con arrays vacíos y marca error, y se sigue.
+ * fijo), y llama a onProgress después de cada uno. Cada lote tiene 1
+ * reintento automático antes de darse por fallado — no corta la corrida:
+ * queda con arrays vacíos y marca error, y se sigue con el próximo.
  *
  * @param {string} apiKey
  * @param {Array<Array>} batches        de scriptParser.batchScenes()
@@ -143,36 +172,22 @@ export async function analyzeScriptBatches(apiKey, batches, globalContext, onPro
     const estimated = messages.reduce((sum, m) => sum + estimateTokens(m.content), 0)
       + BATCH_GENERATION_CONFIG.max_tokens;
 
-    await limiter.wait(estimated);
-    limiter.record(estimated);
-
     let result, error = null;
     try {
-      const res = await fetch(GROQ_ENDPOINT, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model,
-          messages,
-          temperature: BATCH_GENERATION_CONFIG.temperature,
-          max_tokens: BATCH_GENERATION_CONFIG.max_tokens,
-          top_p: BATCH_GENERATION_CONFIG.top_p,
-          stream: false,
-          response_format: { type: "json_schema", json_schema: BATCH_ANALYSIS_SCHEMA },
-        }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data?.error?.message || `Error ${res.status}`);
-
-      const raw = data?.choices?.[0]?.message?.content ?? "";
-      const parsed = parseJsonLoose(raw);
-      result = Array.isArray(parsed) ? parsed : parsed?.escenas;
-      if (!Array.isArray(result)) throw new Error("La respuesta no tuvo el formato esperado.");
-    } catch (err) {
-      error = err.message || "Error al procesar este lote.";
-      // No perdemos el lugar de estas escenas en el resultado final, solo
-      // quedan sin datos — se pueden reintentar o completar a mano después.
-      result = batches[i].map(s => ({ id: s.id, header: s.header, ambientes: [], foley: [], fx: [] }));
+      await limiter.wait(estimated);
+      limiter.record(estimated);
+      result = await callOneBatch(apiKey, model, messages);
+    } catch (firstErr) {
+      try {
+        await limiter.wait(estimated);
+        limiter.record(estimated);
+        result = await callOneBatch(apiKey, model, messages); // 1 reintento
+      } catch (secondErr) {
+        error = secondErr.message || firstErr.message || "Error al procesar este lote.";
+        // No perdemos el lugar de estas escenas en el resultado final, solo
+        // quedan sin datos — se pueden reintentar o completar a mano después.
+        result = batches[i].map(s => ({ id: s.id, header: s.header, ambientes: [], foley: [], fx: [] }));
+      }
     }
 
     onProgress({ batchIndex: i, total: batches.length, result, error });
