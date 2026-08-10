@@ -355,7 +355,7 @@ export const GROQ_MODELS = ["openai/gpt-oss-120b", "openai/gpt-oss-20b"];
 
 // ── Registro remoto opcional (Google Sheets vía Apps Script) ────────────────
 // Dejalo vacío hasta desplegar apps-script/Code.gs — ver README.
-export const SHEETS_ENDPOINT = "";
+export const SHEETS_ENDPOINT = "https://script.google.com/macros/s/AKfycbx_YfdMFQEJxiYc9wL25udjxTPqqLx6sC0J8fSvyJqCgOCliaqqSc4LAEpfHZtZxQ0g/exec";
 
 // ─────────────────────────────────────────────────────────────────────────────
 export function buildSystemPrompt(modeId) {
