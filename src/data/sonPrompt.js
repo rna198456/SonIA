@@ -208,7 +208,82 @@ del marco de Chion/Saitta/bibliografía de cátedra ya establecido. Cerrás
 igual con el menú de opciones.`,
 };
 
-// ── Menú de modos (botones de la UI) ─────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// MODO GUION — Análisis por lotes de un guion completo (100+ páginas)
+// Prompt aparte y deliberadamente liviano: se manda una vez por LOTE (10-20+
+// veces en un largometraje), así que cada token de más acá se multiplica.
+// Sin cita teórica (Chion/Saitta) a propósito — esto es relevamiento rápido
+// de ambientes/foley/fx, no el dossier creativo. Para profundizar una escena
+// puntual después, se usan los modos Wild Tracks / Teoría del chat normal.
+// ─────────────────────────────────────────────────────────────────────────────
+export const BATCH_ANALYSIS_PROMPT = `Sos SonIA analizando un guion completo por lotes para relevar necesidades de diseño de sonido.
+
+Vas a recibir un CONTEXTO GLOBAL (resumen del guion completo) y un LOTE de 3 a 5 escenas puntuales. Para CADA escena del lote identificá:
+- ambientes: paisajes sonoros, clima, reverberación espacial del lugar
+- foley: pasos, ropa, interacción física con objetos y utilería — son notas PARA POSPRODUCCIÓN/el foley artist, no algo a grabar en locación (eso lo cubre el modo Wild Tracks del chat normal)
+- fx: efectos de diseño específico (no diegéticos o procesados)
+
+2 a 4 ítems por categoría, cada uno una frase corta y concreta (3-8 palabras) — no una oración larga. Si una categoría no da para tanto en una escena puntual, devolvé array vacío en vez de inventar contenido que no está en el texto. No repitas el contexto global en la respuesta. No agregues justificación teórica — esto es relevamiento rápido, no dossier creativo. Para profundizar una escena puntual después, se usan los modos Wild Tracks / Teoría del chat normal.
+
+Respondé ÚNICAMENTE el JSON del schema. Nada de texto antes o después, nada de \`\`\`.`;
+
+// Structured Outputs de Groq: soportado con strict:true específicamente en
+// gpt-oss-120b y gpt-oss-20b (console.groq.com/docs/structured-outputs).
+// additionalProperties:false y todo campo en "required" son obligatorios
+// para que el modo estricto valga.
+export const BATCH_ANALYSIS_SCHEMA = {
+  name: "analisis_escenas",
+  strict: true,
+  schema: {
+    type: "object",
+    properties: {
+      escenas: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            id: { type: "integer" },
+            header: { type: "string" },
+            ambientes: { type: "array", items: { type: "string" } },
+            foley: { type: "array", items: { type: "string" } },
+            fx: { type: "array", items: { type: "string" } },
+          },
+          required: ["id", "header", "ambientes", "foley", "fx"],
+          additionalProperties: false,
+        },
+      },
+    },
+    required: ["escenas"],
+    additionalProperties: false,
+  },
+};
+
+// temperature baja: queremos consistencia de formato a lo largo de 10-20+
+// lotes, no variedad creativa. max_tokens cubre un lote de ~4 escenas.
+export const BATCH_GENERATION_CONFIG = { temperature: 0.3, max_tokens: 900, top_p: 0.9, stream: false };
+
+// Prompt corto y barato para el contexto narrativo opcional (1 sola llamada
+// por guion completo, no por lote — ver groqApi.js summarizeScriptForContext).
+export const SCRIPT_SUMMARY_PROMPT = "Resumí este guion en máximo 300 tokens: protagonistas principales, conflicto central, tono/género, ambientación temporal y geográfica. Sin rodeos, sin markdown, texto plano.";
+export const SCRIPT_SUMMARY_CONFIG = { temperature: 0.3, max_tokens: 350, top_p: 0.9, stream: false };
+
+/** Arma los mensajes system/user para UN lote de escenas. El system prompt
+ *  y el contexto global son IDÉNTICOS en todos los lotes de una misma
+ *  corrida y van siempre primero — mismo prefijo entre requests consecutivos,
+ *  para aprovechar el prompt caching automático de Groq.
+ *  @param {string} globalContext
+ *  @param {Array<{id,header,body}>} batch */
+export function buildBatchMessages(globalContext, batch) {
+  const batchText = batch
+    .map(s => `[Escena ${s.id}] ${s.header}\n${s.body}`)
+    .join("\n\n");
+  return [
+    { role: "system", content: BATCH_ANALYSIS_PROMPT },
+    { role: "user", content: `CONTEXTO GLOBAL:\n${globalContext}\n\nLOTE (${batch.length} escenas):\n${batchText}` },
+  ];
+}
+
+
 export const MODES = [
   { id: "microfonia", label: "Microfonía y cobertura", icon: "🎙️", color: "cyan",
     desc: "Esquema de mics por escena, planos secuencia, multicámara" },
@@ -249,7 +324,10 @@ export const SUGGESTIONS = [
 
 // ── Configuración de generación (varía según lo que exige cada modo) ────────
 export function getGenerationConfig(modeId) {
-  const base = { max_tokens: 2048, top_p: 0.9, stream: false };
+  // 1024 y no más: con el límite gratuito de Groq (8000 TPM en gpt-oss-120b),
+  // un max_tokens alto por sí solo ya se come un cuarto del presupuesto del
+  // request. Ver trimHistory.js para el resto del ajuste.
+  const base = { max_tokens: 1024, top_p: 0.9, stream: false };
   switch (modeId) {
     case "wildtracks":
     case "teoria":
@@ -270,9 +348,9 @@ export const GROQ_MODELS = ["openai/gpt-oss-120b", "openai/gpt-oss-20b"];
 
 // ── Registro remoto opcional (Google Sheets vía Apps Script) ────────────────
 // Dejalo vacío hasta desplegar apps-script/Code.gs — ver README.
-export const SHEETS_ENDPOINT = "https://script.google.com/macros/s/AKfycbxU_WTnm_a994Qpki283p_jCXq-c7MhjpTyvBNTCDPX-fTkaDQ17MhQ_ezfF25A-h_x/exec";
+export const SHEETS_ENDPOINT = "";
 
-/** Concatena el prompt base con el fragmento del modo activo. */
+// ─────────────────────────────────────────────────────────────────────────────
 export function buildSystemPrompt(modeId) {
   return BASE_PROMPT + (MODE_PROMPTS[modeId] || "");
 }

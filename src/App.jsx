@@ -4,6 +4,7 @@ import {
   MODES, WELCOME_MESSAGE, SUGGESTIONS, getGenerationConfig, buildSystemPrompt,
 } from "./data/sonPrompt";
 import { classifyMessage } from "./utils/classifier";
+import { buildApiMessages } from "./utils/trimHistory";
 import { callGroq } from "./utils/groqApi";
 import { sendToRemoteLog } from "./utils/remoteLog";
 import {
@@ -13,6 +14,7 @@ import ApiKeySetup from "./components/ApiKeySetup";
 import ModeSelector from "./components/ModeSelector";
 import Message from "./components/Message";
 import LevelMeter from "./components/LevelMeter";
+import ScriptUpload from "./components/ScriptUpload";
 
 export default function App() {
   const [apiKey, setApiKey]     = useState(() => loadApiKey());
@@ -52,10 +54,7 @@ export default function App() {
 
     try {
       const systemPrompt = buildSystemPrompt(modeForThisTurn);
-      const apiMessages = [
-        { role: "system", content: systemPrompt },
-        ...nextMessages.map(m => ({ role: m.role, content: m.content })),
-      ];
+      const { apiMessages } = buildApiMessages(systemPrompt, nextMessages);
       const genConfig = getGenerationConfig(modeForThisTurn);
       const { reply } = await callGroq(apiKey, apiMessages, genConfig);
 
@@ -122,6 +121,11 @@ export default function App() {
 
       {/* Input */}
       <div style={{ display: "flex", gap: 8, padding: 12, borderTop: `1px solid ${T.borderSub}`, background: T.surface }}>
+        <ScriptUpload
+          apiKey={apiKey}
+          onInsertText={(text) => setInput(prev => (prev ? prev + "\n\n" + text : text))}
+          onBatchMessage={(markdown) => setMessages(m => [...m, { role: "assistant", content: markdown }])}
+        />
         <textarea
           value={input}
           onChange={e => setInput(e.target.value)}

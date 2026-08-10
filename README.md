@@ -54,7 +54,18 @@ git remote add origin https://github.com/TU-USUARIO/sonia.git
 git push -u origin main
 ```
 
-## Registro remoto opcional (Google Sheets)
+## Modo Guion (guiones de largometraje, 100+ páginas)
+
+Botón 📎 al lado del input. Al subir un PDF:
+
+- **< 6 escenas detectadas** → panel para elegir cuáles insertar en el chat y trabajarlas a fondo con los modos normales.
+- **≥ 6 escenas** → además ofrece "Escanear el guion completo": arma lotes de 3-5 escenas (`scriptParser.batchScenes`, acotado también por caracteres, no solo cantidad), y los procesa uno por uno contra Groq con `structured outputs` (`json_schema`, `strict: true` — soportado en `gpt-oss-120b`/`20b`) para extraer `ambientes`/`foley`/`fx` por escena.
+- El ritmo entre lotes lo maneja un rate limiter real (`groqApi.js: TokenRateLimiter`) que trackea tokens usados en la ventana de 60s, no un delay fijo — clave para no repetir el 413 de TPM en un guion largo.
+- Cada lote que termina se inyecta al chat como un mensaje más (`batchToMarkdown.js`) — hereda gratis el render de tablas y el botón de exportar CSV de `Message.jsx`. Un lote que falla no corta la corrida: queda marcado con error y se puede reintentar esa escena a mano.
+- El contexto global que viaja en cada lote combina dos capas: metadata determinística gratis (`scriptParser.extractDeterministicContext` — locaciones, INT/EXT, día/noche, sin costo de API) + un resumen narrativo opcional de 1 sola llamada barata (`groqApi.summarizeScriptForContext`, botón "✨ Completar con IA").
+- `pdfjs-dist` se importa dinámicamente recién al elegir un archivo (no infla el bundle inicial — el chunk pesa ~480 KB y solo se baja si se usa 📎).
+
+
 
 Por default `SHEETS_ENDPOINT` está vacío y SonIA funciona igual — solo no
 persiste el historial fuera de tu navegador. Para loguear cada Parte de

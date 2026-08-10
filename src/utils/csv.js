@@ -41,3 +41,22 @@ export async function copyTableAsTSV(tableEl) {
     return false;
   }
 }
+
+/** Descarga un array de objetos planos como .csv — para datos que ya están
+ *  en JS (como los resultados del Modo Guion), no tablas ya renderizadas. */
+export function downloadArrayAsCSV(rows, columns, filename = "sonia-export") {
+  if (!rows?.length) return;
+  const header = columns.map(c => cellToCSV(c.label)).join(",");
+  const body = rows
+    .map(row => columns.map(c => cellToCSV(c.get(row))).join(","))
+    .join("\n");
+
+  const blob = new Blob(["\uFEFF" + header + "\n" + body], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `${filename}-${new Date().toISOString().split("T")[0]}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
