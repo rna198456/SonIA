@@ -1,59 +1,71 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// trimHistory.js — Arma el array de mensajes que se manda a Groq, acotado a un
-// presupuesto de caracteres para no pasarse del TPM del plan gratuito
-// (openai/gpt-oss-120b: 8000 TPM — ver console.groq.com/docs/rate-limits).
+// trimHistory.js — Arma el array de mensajes que se manda a Groq.
 //
-// Importante: esto SOLO recorta lo que se envía en el request. El historial
-// completo se sigue mostrando en pantalla y guardando en localStorage — acá
-// no se borra nada de la conversación, solo se decide qué mandar esta vez.
+// Antes: "primer mensaje + más recientes". Problema real: si el guion no
+// fue el primer mensaje de la charla, podía quedar afuera del recorte más
+// adelante — y con el prompt actual (que no bloquea por datos faltantes),
+// eso se traducía en diálogo inventado en vez de un corte limpio.
+//
+// Ahora: cualquier mensaje SUSTANCIAL del usuario (guion, casting, notas
+// largas — más de SCRIPT_LIKE_CHARS) se manda SIEMPRE completo, sin
+// importar qué tan viejo sea. Solo se acota por presupuesto lo
+// conversacional corto. Si eso hace que el request sea grande, es
+// preferible el 413 explícito (ya manejado en groqApi.js) a perder en
+// silencio el guion real.
 // ─────────────────────────────────────────────────────────────────────────────
 
-const DEFAULT_BUDGET_CHARS = 12000; // ≈ 3000-3400 tokens de historial
+const SCRIPT_LIKE_CHARS = 500;     // más largo que esto → material de referencia, nunca se recorta
+const RECENT_BUDGET_CHARS = 8000;  // presupuesto solo para lo conversacional corto reciente
 
 /**
  * @param {string} systemPrompt
  * @param {Array<{role,content}>} messages  incluye el WELCOME_MESSAGE en [0]
- * @param {number} maxChars  presupuesto de caracteres para el historial (sin contar el system prompt)
+ * @param {number} recentBudget  presupuesto de caracteres para los mensajes cortos
  * @returns {{apiMessages: Array, trimmedCount: number}}
  */
-export function buildApiMessages(systemPrompt, messages, maxChars = DEFAULT_BUDGET_CHARS) {
-  // El primer mensaje del array siempre es el WELCOME_MESSAGE (assistant, estático)
-  // — no aporta nada nuevo que el system prompt no diga ya, así que no se manda.
+export function buildApiMessages(systemPrompt, messages, recentBudget = RECENT_BUDGET_CHARS) {
+  // El primer mensaje del array siempre es el WELCOME_MESSAGE (assistant,
+  // estático) — no aporta nada que el system prompt no diga ya.
   const real = messages.slice(1);
 
   if (real.length === 0) {
     return { apiMessages: [{ role: "system", content: systemPrompt }], trimmedCount: 0 };
   }
 
-  // El primer mensaje REAL suele traer el guion/casting/plan — se preserva
-  // siempre entero, aunque coma buena parte del presupuesto.
-  const first = real[0];
-  const rest = real.slice(1);
+  // Separamos: sustancial (guion/casting/notas largas del usuario — se
+  // manda siempre entero) vs. corto (charla — se acota por presupuesto).
+  const substantial = [];
+  const short = [];
+  real.forEach((m, i) => {
+    const isSubstantial = m.role === "user" && m.content.length > SCRIPT_LIKE_CHARS;
+    (isSubstantial ? substantial : short).push({ ...m, _i: i });
+  });
 
-  let budget = maxChars - first.content.length;
-  const kept = [];
-  for (let i = rest.length - 1; i >= 0; i--) {
-    const len = rest[i].content.length;
-    if (budget - len < 0 && kept.length > 0) break; // siempre entra al menos el último mensaje
-    kept.unshift(rest[i]);
+  let budget = recentBudget;
+  const keptShort = [];
+  for (let i = short.length - 1; i >= 0; i--) {
+    const len = short[i].content.length;
+    if (budget - len < 0 && keptShort.length > 0) break; // siempre entra al menos el más reciente
+    keptShort.unshift(short[i]);
     budget -= len;
   }
 
-  const trimmedCount = rest.length - kept.length;
+  // Reordenamos por posición original — la charla mantiene su secuencia
+  // real para el modelo, no separamos "guion" de "conversación".
+  const merged = [...substantial, ...keptShort]
+    .sort((a, b) => a._i - b._i)
+    .map(({ _i, ...m }) => m);
+
+  const trimmedCount = short.length - keptShort.length;
   const notice = trimmedCount > 0
     ? [{
         role: "system",
-        content: `(Se omitieron ${trimmedCount} mensaje(s) intermedios más viejos de este envío por presupuesto de tokens — el pedido inicial y lo más reciente siguen presentes.)`,
+        content: `(Se omitieron ${trimmedCount} mensaje(s) cortos más viejos por presupuesto — el material sustancial como guion/casting/notas largas se manda siempre completo, nunca se recorta. Si te piden algo sobre una escena y no ves su texto acá, decilo — no lo inventes.)`,
       }]
     : [];
 
   return {
-    apiMessages: [
-      { role: "system", content: systemPrompt },
-      first,
-      ...notice,
-      ...kept,
-    ],
+    apiMessages: [{ role: "system", content: systemPrompt }, ...notice, ...merged],
     trimmedCount,
   };
 }
